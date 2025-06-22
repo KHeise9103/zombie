@@ -26,23 +26,21 @@ class Nurse(Character):
         self.item_vals = {"Medkit":50, "Syringe":15}
 
     def heal_self(self):
-        if self.heals <= 0:
-            return 0
+        if self.heals <= 0: return 0
         self.heals -= 1
-        self.hp = min(self.hp + self.heal_amt, self.max_hp)
-        return self.heal_amt
+        amt = self.heal_amt
+        self.hp = min(self.hp + amt, self.max_hp)
+        return amt
 
     def special_attack(self, other):
-        if self.specials <= 0:
-            return 0
+        if self.specials <= 0: return 0
         self.specials -= 1
         dmg = random.randint(self.smin, self.smax)
         other.hp = max(other.hp - dmg, 0)
         return dmg
 
     def use_item(self, item):
-        if self.inventory.get(item, 0) <= 0:
-            return 0
+        if self.inventory.get(item,0) <= 0: return 0
         self.inventory[item] -= 1
         amt = self.item_vals[item]
         self.hp = min(self.hp + amt, self.max_hp)
@@ -50,24 +48,32 @@ class Nurse(Character):
 
 class Zombie(Character): pass
 
-# ─── Helpers ──────────────────────────────────────────────────────────────────
+# ─── State Helpers ─────────────────────────────────────────────────────────────
 
-def get_state():
-    """Ensure nurse, zombie, wave exist."""
-    if "nurse" not in st.session_state:
-        st.session_state.nurse = Nurse()
-    if "zombie" not in st.session_state:
-        # default medium
-        st.session_state.zombie = Zombie("Zombie", 120, 15, 25)
-    if "wave" not in st.session_state:
-        st.session_state.wave = 1
+def init_state():
+    """Initialize session state on first load."""
+    if "started" not in st.session_state:
+        st.session_state.started = False
+        st.session_state.diff    = "Medium"
+    if st.session_state.started:
+        if "nurse" not in st.session_state:
+            st.session_state.nurse  = Nurse()
+        if "zombie" not in st.session_state:
+            hp, dmin, dmax = DIFF_PARAMS[st.session_state.diff]
+            st.session_state.zombie = Zombie("Zombie", hp, dmin, dmax)
+        if "wave" not in st.session_state:
+            st.session_state.wave   = 1
 
-def reset_state(difficulty):
-    """Reset for new game or retry."""
-    st.session_state.nurse = Nurse()
-    hp, dmin, dmax = {"Easy":(80,10,15),"Medium":(120,15,25),"Hard":(150,20,30)}[difficulty]
+def reset_game(difficulty):
+    """(Re)start the game at a given difficulty."""
+    st.session_state.started = True
+    st.session_state.diff    = difficulty
+    st.session_state.nurse  = Nurse()
+    hp, dmin, dmax = DIFF_PARAMS[difficulty]
     st.session_state.zombie = Zombie("Zombie", hp, dmin, dmax)
-    st.session_state.wave = 1
+    st.session_state.wave   = 1
+
+# ─── Image Loader ─────────────────────────────────────────────────────────────
 
 def load_img(fn, width=None):
     img = Image.open(fn)
@@ -76,90 +82,94 @@ def load_img(fn, width=None):
         img = img.resize((int(img.width*ratio), int(img.height*ratio)))
     return img
 
-# ─── Streamlit page setup ─────────────────────────────────────────────────────
+# ─── Constants ────────────────────────────────────────────────────────────────
+
+DIFF_PARAMS = {
+    "Easy":   (80, 10, 15),
+    "Medium": (120,15,25),
+    "Hard":   (150,20,30),
+}
+
+# ─── Streamlit Layout ─────────────────────────────────────────────────────────
 
 st.set_page_config(page_title="Nurse vs Zombie", layout="wide")
 st.title("🩺 Nurse vs 🧟 Zombie")
 
-# Initialize our “started” flag once
-if "started" not in st.session_state:
-    st.session_state.started = False
-    st.session_state.diff = "Medium"  # default
+init_state()
 
-# ─── Difficulty selector ──────────────────────────────────────────────────────
-
+# 1) Difficulty screen
 if not st.session_state.started:
-    diff = st.radio("Choose difficulty", ["Easy","Medium","Hard"], index=["Easy","Medium","Hard"].index(st.session_state.diff), horizontal=True)
+    choice = st.radio(
+        "Choose difficulty", 
+        options=list(DIFF_PARAMS.keys()), 
+        index=list(DIFF_PARAMS.keys()).index(st.session_state.diff),
+        horizontal=True
+    )
     if st.button("Start Game"):
-        st.session_state.diff = diff
-        reset_state(diff)
-        st.session_state.started = True
+        reset_game(choice)
+        st.experimental_rerun()
+    st.stop()  # don't render the rest until they've started
 
-# ─── Main game UI ────────────────────────────────────────────────────────────
+# 2) Main battle UI
+n = st.session_state.nurse
+z = st.session_state.zombie
 
-if st.session_state.started:
-    get_state()
-    n = st.session_state.nurse
-    z = st.session_state.zombie
+# Sprites & background
+bg = load_img("background.png", width=600)
+c1, c2, c3 = st.columns([1,2,1])
+with c1:
+    st.image(load_img("nurse.png", width=200), caption="Nurse", use_container_width=False)
+with c2:
+    st.image(bg, use_container_width=True)
+with c3:
+    st.image(load_img("zombie.png", width=200), caption="Zombie", use_container_width=False)
 
-    # Sprites + Background
-    bg = load_img("background.png", width=600)
-    c1, c2, c3 = st.columns([1,2,1])
-    with c1:
-        st.image(load_img("nurse.png", width=200), caption="Nurse")
-    with c2:
-        st.image(bg, use_column_width=True)
-    with c3:
-        st.image(load_img("zombie.png", width=200), caption="Zombie")
+st.subheader(f"Wave {st.session_state.wave}")
+# Health display
+st.markdown(f"**Nurse:** {n.hp}/{n.max_hp} HP")
+st.progress(n.hp / n.max_hp)
+st.markdown(f"**Zombie:** {z.hp}/{z.max_hp} HP")
+st.progress(z.hp / z.max_hp)
 
-    st.subheader(f"Wave {st.session_state.wave}")
-    st.progress(n.hp / n.max_hp, text=f"Nurse: {n.hp}/{n.max_hp} HP")
-    st.progress(z.hp / z.max_hp, text=f"Zombie: {z.hp}/{z.max_hp} HP")
+# Actions
+cols = st.columns(4)
+action = None
+if cols[0].button("Attack"):
+    dmg = n.attack(z)
+    st.success(f"You attack for {dmg} damage!")
+    action = True
+if cols[1].button("Heal", disabled=(n.heals<=0)):
+    amt = n.heal_self()
+    st.info(f"You heal for {amt} HP.")
+    action = True
+if cols[2].button("Special", disabled=(n.specials<=0)):
+    dmg = n.special_attack(z)
+    st.warning(f"Adrenaline shot for {dmg} damage!")
+    action = True
+if cols[3].button("Use Item", disabled=(sum(n.inventory.values())==0)):
+    item = st.selectbox("Select item", [i for i,c in n.inventory.items() if c>0])
+    amt  = n.use_item(item)
+    st.info(f"You use {item} and heal {amt} HP.")
+    action = True
 
-    # Action buttons
-    cols = st.columns(4)
-    action_taken = False
+# Zombie turn
+if action:
+    dmg = z.attack(n)
+    st.error(f"Zombie bites you for {dmg} damage!")
 
-    if cols[0].button("Attack"):
-        dmg = n.attack(z)
-        st.success(f"You attack for {dmg} damage!")
-        action_taken = True
+# Check end
+if n.hp <= 0:
+    st.error("💀 You died…")
+    if st.button("Play Again"):
+        st.session_state.started = False
+        st.experimental_rerun()
+    st.stop()
 
-    if cols[1].button("Heal", disabled=(n.heals<=0)):
-        amt = n.heal_self()
-        st.info(f"You heal for {amt} HP.")
-        action_taken = True
-
-    if cols[2].button("Special", disabled=(n.specials<=0)):
-        dmg = n.special_attack(z)
-        st.warning(f"Adrenaline shot! {dmg} damage.")
-        action_taken = True
-
-    if cols[3].button("Use Item", disabled=(sum(n.inventory.values())==0)):
-        choice = st.selectbox("Choose item", [i for i,c in n.inventory.items() if c>0])
-        amt = n.use_item(choice)
-        st.info(f"You use a {choice} and heal {amt} HP.")
-        action_taken = True
-
-    # Zombie counterattack once per interaction
-    if action_taken:
-        dmg = z.attack(n)
-        st.error(f"Zombie bites you for {dmg} damage!")
-
-    # End‐game checks
-    if n.hp <= 0:
-        st.error("💀 You died…")
-        if st.button("Play Again"):
-            st.session_state.started = False
-            st.experimental_rerun()
-        st.stop()
-
-    if z.hp <= 0:
-        st.success("🎉 You defeated the Zombie!")
-        if st.button("Next Wave"):
-            st.session_state.wave += 1
-            hp = 120 + 10*st.session_state.wave
-            st.session_state.zombie = Zombie("Zombie", hp, 15, 25)
-            # carry nurse forward
-            st.experimental_rerun()
-        st.stop()
+if z.hp <= 0:
+    st.success("🎉 You defeated the Zombie!")
+    if st.button("Next Wave"):
+        st.session_state.wave += 1
+        hp, dmin, dmax = 120 + 10*st.session_state.wave, 15, 25
+        st.session_state.zombie = Zombie("Zombie", hp, dmin, dmax)
+        st.experimental_rerun()
+    st.stop()
