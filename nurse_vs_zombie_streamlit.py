@@ -2,145 +2,127 @@
 import streamlit as st
 import random
 
-# Character classes
-class Character:
-    def __init__(self, name, max_hp, dmin, dmax):
-        self.name = name
-        self.max_hp = max_hp
-        self.hp = max_hp
-        self.dmin = dmin
-        self.dmax = dmax
+# Initialize game state
+if "nurse_hp" not in st.session_state:
+    st.session_state.nurse_hp = 100
+    st.session_state.zombie_hp = 120
+    st.session_state.nurse_heals = 3
+    st.session_state.nurse_specials = 2
+    st.session_state.inventory = {"Medkit": 1, "Syringe": 2}
+    st.session_state.difficulty = "Medium"
+    st.session_state.logs = []
+    st.session_state.wave = 1
 
-    def attack(self, target):
-        dmg = random.randint(self.dmin, self.dmax)
-        target.hp = max(target.hp - dmg, 0)
-        return dmg
+# Character stats by difficulty
+difficulty_settings = {
+    "Easy": (80, 10, 15),
+    "Medium": (120, 15, 25),
+    "Hard": (150, 20, 30)
+}
 
-class Nurse(Character):
-    def __init__(self):
-        super().__init__("Nurse", 100, 10, 20)
-        self.heals = 3
-        self.heal_amt = 25
-        self.specials = 2
-        self.smin, self.smax = 30, 50
-        self.inventory = {"Medkit":1, "Syringe":2}
-        self.item_vals = {"Medkit":50, "Syringe":15}
+# Select difficulty at start
+if "difficulty_set" not in st.session_state:
+    st.title("🩺 Nurse vs 🧟 Zombie")
+    st.write("Choose difficulty")
+    col1, col2, col3 = st.columns(3)
+    with col1: if st.button("Easy"): st.session_state.difficulty = "Easy"; st.session_state.difficulty_set = True; st.experimental_rerun()
+    with col2: if st.button("Medium"): st.session_state.difficulty = "Medium"; st.session_state.difficulty_set = True; st.experimental_rerun()
+    with col3: if st.button("Hard"): st.session_state.difficulty = "Hard"; st.session_state.difficulty_set = True; st.experimental_rerun()
+    st.stop()
 
-    def heal(self):
-        if self.heals <= 0:
-            return 0
-        self.heals -= 1
-        self.hp = min(self.hp + self.heal_amt, self.max_hp)
-        return self.heal_amt
+# Load difficulty
+z_hp, z_min, z_max = difficulty_settings[st.session_state.difficulty]
+if st.session_state.zombie_hp > z_hp:
+    st.session_state.zombie_hp = z_hp
 
-    def special(self, target):
-        if self.specials <= 0:
-            return 0
-        self.specials -= 1
-        dmg = random.randint(self.smin, self.smax)
-        target.hp = max(target.hp - dmg, 0)
-        return dmg
+# Sidebar stats
+st.sidebar.title("Stats")
+st.sidebar.write(f"Nurse HP: {st.session_state.nurse_hp}/100")
+st.sidebar.write(f"Zombie HP: {st.session_state.zombie_hp}/{z_hp}")
+st.sidebar.write(f"Heals Left: {st.session_state.nurse_heals}")
+st.sidebar.write(f"Specials Left: {st.session_state.nurse_specials}")
+st.sidebar.write("Inventory:")
+for item, count in st.session_state.inventory.items():
+    st.sidebar.write(f"- {item}: x{count}")
 
-    def use_item(self, item):
-        if self.inventory.get(item, 0) <= 0:
-            return 0
-        self.inventory[item] -= 1
-        heal = self.item_vals[item]
-        self.hp = min(self.hp + heal, self.max_hp)
-        return heal
+# Game Log
+st.title("Wave " + str(st.session_state.wave))
+st.header("Nurse: 100/100 HP")
+st.header(f"Zombie: {z_hp}/{z_hp} HP")
+st.subheader("Action")
 
-class Zombie(Character): pass
+col1, col2, col3, col4 = st.columns(4)
 
-# Game Setup
-if 'started' not in st.session_state:
-    st.session_state.started = False
-    st.session_state.nurse = Nurse()
-    st.session_state.difficulty = 'Medium'
-    st.session_state.zombie = None
-    st.session_state.log = []
+def log(message):
+    st.session_state.logs.append(message)
 
-def start_game():
-    st.session_state.nurse = Nurse()
-    params = {"Easy":(80,10,15), "Medium":(120,15,25), "Hard":(150,20,30)}[st.session_state.difficulty]
-    st.session_state.zombie = Zombie("Zombie", *params)
-    st.session_state.log = []
-    st.session_state.started = True
+def nurse_attack():
+    dmg = random.randint(10, 20)
+    st.session_state.zombie_hp = max(st.session_state.zombie_hp - dmg, 0)
+    log(f"🩺 Nurse attacks for {dmg} damage!")
+    zombie_attack()
 
-def log(msg):
-    st.session_state.log.append(msg)
+def nurse_heal():
+    if st.session_state.nurse_heals > 0:
+        st.session_state.nurse_heals -= 1
+        st.session_state.nurse_hp = min(st.session_state.nurse_hp + 25, 100)
+        log(f"🩺 Nurse heals for 25 HP!")
+        zombie_attack()
+    else:
+        log("🩺 No heals left!")
+
+def nurse_special():
+    if st.session_state.nurse_specials > 0:
+        st.session_state.nurse_specials -= 1
+        dmg = random.randint(30, 50)
+        st.session_state.zombie_hp = max(st.session_state.zombie_hp - dmg, 0)
+        log(f"💉 Special attack hits for {dmg} damage!")
+        zombie_attack()
+    else:
+        log("💉 No specials left!")
+
+def nurse_use_item():
+    available = [k for k,v in st.session_state.inventory.items() if v > 0]
+    if not available:
+        log("📦 No items left!")
+        zombie_attack()
+        return
+    item = st.radio("Select item to use:", available)
+    if st.button("Use Item"):
+        if st.session_state.inventory[item] > 0:
+            st.session_state.inventory[item] -= 1
+            heal_amt = 50 if item == "Medkit" else 15
+            st.session_state.nurse_hp = min(st.session_state.nurse_hp + heal_amt, 100)
+            log(f"🩺 Used {item} and healed for {heal_amt} HP!")
+            zombie_attack()
 
 def zombie_attack():
-    dmg = st.session_state.zombie.attack(st.session_state.nurse)
-    log(f"🧟 Zombie bites you for {dmg} dmg.")
+    dmg = random.randint(z_min, z_max)
+    st.session_state.nurse_hp = max(st.session_state.nurse_hp - dmg, 0)
+    log(f"🧟 Zombie attacks for {dmg} damage!")
 
-def game_over():
-    n = st.session_state.nurse
-    z = st.session_state.zombie
-    if n.hp <= 0:
-        st.error("💀 YOU DIED")
-        return True
-    elif z.hp <= 0:
-        st.success("🎉 YOU WIN!")
-        return True
-    return False
+# Button logic
+with col1: st.button("Attack", on_click=nurse_attack)
+with col2: st.button("Heal", on_click=nurse_heal)
+with col3: st.button("Special", on_click=nurse_special)
+with col4: st.button("Use Item", on_click=nurse_use_item)
 
-# UI
-st.title("🩺 Nurse vs 🧟 Zombie")
+# Game logs
+st.subheader("Combat Log")
+for log_line in st.session_state.logs[-10:]:
+    st.write(log_line)
 
-if not st.session_state.started:
-    st.subheader("Choose difficulty")
-    st.session_state.difficulty = st.radio("", ["Easy", "Medium", "Hard"], index=1)
-    if st.button("Start Game"):
-        start_game()
+# Game Over
+if st.session_state.nurse_hp <= 0:
+    st.error("💀 Nurse has fallen. Game Over!")
+    if st.button("Restart"):
+        for k in list(st.session_state.keys()):
+            del st.session_state[k]
         st.experimental_rerun()
-else:
-    n = st.session_state.nurse
-    z = st.session_state.zombie
 
-    st.subheader(f"Wave 1")
-    st.markdown(f"**Nurse:** {n.hp}/{n.max_hp} HP")
-    st.markdown(f"**Zombie:** {z.hp}/{z.max_hp} HP")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("⚔️ Attack"):
-            dmg = n.attack(z)
-            log(f"You attack for {dmg} dmg.")
-            zombie_attack()
-            st.experimental_rerun()
-
-        if st.button("💊 Heal", disabled=n.heals <= 0):
-            healed = n.heal()
-            log(f"You heal for {healed} HP.")
-            zombie_attack()
-            st.experimental_rerun()
-
-        if st.button("💉 Special", disabled=n.specials <= 0):
-            dmg = n.special(z)
-            log(f"Adrenaline Shot! {dmg} dmg.")
-            zombie_attack()
-            st.experimental_rerun()
-
-        items = [k for k,v in n.inventory.items() if v > 0]
-        item = st.selectbox("Use Item", options=items if items else ["No Items"], disabled=not items)
-        if st.button("🧪 Use Item", disabled=not items):
-            healed = n.use_item(item)
-            log(f"You use {item} and heal {healed} HP.")
-            zombie_attack()
-            st.experimental_rerun()
-
-    with col2:
-        st.markdown(f"**Heals left:** {n.heals}")
-        st.markdown(f"**Specials left:** {n.specials}")
-        st.markdown("**Inventory:**")
-        for k, v in n.inventory.items():
-            st.markdown(f"- {k}: ×{v}")
-
-    st.divider()
-    for l in st.session_state.log[-10:]:
-        st.markdown(l)
-
-    if game_over():
-        if st.button("🔁 Retry"):
-            st.session_state.started = False
-            st.experimental_rerun()
+elif st.session_state.zombie_hp <= 0:
+    st.success("🎉 You defeated the zombie!")
+    if st.button("Next Wave"):
+        st.session_state.wave += 1
+        st.session_state.zombie_hp = z_hp + 20 * st.session_state.wave
+        st.experimental_rerun()
